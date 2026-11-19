@@ -18,8 +18,6 @@ pub fn fnv1_64(data: &[u8]) -> u64 {
 const MAX_VAR_LEN_64: usize = 9;
 // 8 hash bytes plus two varints of up to MAX_VAR_LEN_64 + 1 bytes each.
 const MAX_PATHWAY_LEN: usize = 8 + 2 * (MAX_VAR_LEN_64 + 1);
-// 2**63 as f64: millisecond values at or beyond it do not fit in an i64.
-const I64_LIMIT_F64: f64 = 9_223_372_036_854_775_808.0;
 
 // Mirrors encoding.encode_var_uint_64, including its up to MAX_VAR_LEN_64 continuation bytes.
 fn put_var_uint_64(buf: &mut [u8; MAX_PATHWAY_LEN], len: &mut usize, mut v: u64) {
@@ -58,16 +56,6 @@ fn take_var_int_64(data: &mut &[u8]) -> Option<i64> {
     Some(((v >> 1) as i64) ^ -((v & 1) as i64))
 }
 
-// Same truncation as Python's int(sec * 1e3); None when the result does not fit in an i64.
-fn sec_to_ms(sec: f64) -> Option<i64> {
-    let ms = sec * 1e3;
-    if ms.is_finite() && (-I64_LIMIT_F64..I64_LIMIT_F64).contains(&ms) {
-        Some(ms as i64)
-    } else {
-        None
-    }
-}
-
 fn encode_pathway(hash: u64, pathway_start_ms: i64, edge_start_ms: i64) -> String {
     let mut buf = [0u8; MAX_PATHWAY_LEN];
     buf[..8].copy_from_slice(&hash.to_le_bytes());
@@ -89,17 +77,17 @@ fn decode_pathway(encoded: &[u8]) -> Option<(u64, f64, f64)> {
     ))
 }
 
-/// Base64 pathway context, byte-identical to DataStreamsCtx.encode_b64.
-/// Returns None for inputs the caller must encode in Python (non-u64 hash, out-of-range times).
+/// Base64 pathway context from millisecond timestamps, byte-identical to the Python encoder.
+/// Returns None for inputs the caller must encode in Python (non-u64 hash, non-i64 times).
 #[pyfunction]
 pub fn encode_pathway_b64(
     hash_value: &Bound<'_, PyAny>,
-    pathway_start_sec: &Bound<'_, PyAny>,
-    edge_start_sec: &Bound<'_, PyAny>,
+    pathway_start_ms: &Bound<'_, PyAny>,
+    edge_start_ms: &Bound<'_, PyAny>,
 ) -> Option<String> {
     let hash = hash_value.extract::<u64>().ok()?;
-    let pathway_start_ms = sec_to_ms(pathway_start_sec.extract::<f64>().ok()?)?;
-    let edge_start_ms = sec_to_ms(edge_start_sec.extract::<f64>().ok()?)?;
+    let pathway_start_ms = pathway_start_ms.extract::<i64>().ok()?;
+    let edge_start_ms = edge_start_ms.extract::<i64>().ok()?;
     Some(encode_pathway(hash, pathway_start_ms, edge_start_ms))
 }
 
@@ -191,14 +179,5 @@ mod tests {
             (0..MAX_VAR_LEN_64 - 1).fold(0u64, |x, i| x | (0x7F << (7 * i))) | (0xFF << 56);
         assert_eq!(take_var_uint_64(&mut rest), Some(expected));
         assert_eq!(rest, &[0xFF]);
-    }
-
-    #[test]
-    fn test_sec_to_ms_truncates_like_python_int() {
-        assert_eq!(sec_to_ms(1.9999), Some(1999));
-        assert_eq!(sec_to_ms(-1.9999), Some(-1999));
-        assert_eq!(sec_to_ms(f64::NAN), None);
-        assert_eq!(sec_to_ms(f64::INFINITY), None);
-        assert_eq!(sec_to_ms(1e16), None);
     }
 }

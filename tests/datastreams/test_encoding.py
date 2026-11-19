@@ -110,7 +110,9 @@ def test_encode_b64_falls_back_outside_native_range():
     ctx.hash = 1
     ctx.pathway_start_sec = 1e17
     ctx.current_edge_start_sec = 1.0
-    assert native_encode_pathway_b64(ctx.hash, ctx.pathway_start_sec, ctx.current_edge_start_sec) is None
+    pathway_start_ms = int(ctx.pathway_start_sec * 1e3)
+    current_edge_start_ms = int(ctx.current_edge_start_sec * 1e3)
+    assert native_encode_pathway_b64(ctx.hash, pathway_start_ms, current_edge_start_ms) is None
     assert ctx.encode_b64() == _reference_encode_b64(ctx)
 
 
